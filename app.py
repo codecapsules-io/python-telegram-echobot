@@ -1,55 +1,43 @@
 from flask import Flask, request
-import telegram
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import asyncio
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
 URL = os.getenv("URL")
-bot = telegram.Bot(token=TOKEN)
 
 app = Flask(__name__)
 
+def _build_ptb():
+    ptb = Application.builder().token(TOKEN).build()
 
-@app.route("/{}".format(TOKEN), methods=["POST"])
-def respond():
-    # retrieve the message in JSON and then transform it to Telegram object
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    chat_id = update.message.chat.id
-    msg_id = update.message.message_id
+    async def start(update: Update, context):
+        await update.message.reply_text("Hi! I respond by echoing messages. Give it a try!")
 
-    # Telegram understands UTF-8, so encode text for unicode compatibility
-    text = update.message.text.encode("utf-8").decode()
+    async def echo(update: Update, context):
+        await update.message.reply_text(update.message.text)
 
-    # the first time you chat with the bot AKA the welcoming message
-    if text == "/start":
-        # print the welcoming message
-        bot_welcome = "Hi! I respond by echoing messages. Give it a try!"
-        # send the welcoming message
-        bot.sendMessage(chat_id=chat_id, text=bot_welcome, reply_to_message_id=msg_id)
+    ptb.add_handler(CommandHandler("start", start))
+    ptb.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+    return ptb
 
-    else:
-        bot.sendMessage(chat_id=chat_id, text=text)
+ptb_app = _build_ptb() if TOKEN else None
 
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), ptb_app.bot)
+    asyncio.run(ptb_app.process_update(update))
     return "ok"
 
 
 @app.route("/setwebhook", methods=["GET", "POST"])
 def set_webhook():
-    # we use the bot object to link the bot to our app which live
-    # in the link provided by URL
-    s = bot.setWebhook("{URL}{HOOK}".format(URL=URL, HOOK=TOKEN))
-    # something to let us know things work
-    if s:
-        return "webhook setup ok"
-    else:
-        return "webhook setup failed"
+    success = asyncio.run(ptb_app.bot.set_webhook(f"{URL}webhook"))
+    return "webhook setup ok" if success else "webhook setup failed"
 
 
 @app.route("/")
 def index():
     return "Hello, welcome to the telegram bot index page"
-
-
-if __name__ == "__main__":
-    # note the threaded arg which allow
-    # your app to have more than one thread
-    app.run(threaded=True)
